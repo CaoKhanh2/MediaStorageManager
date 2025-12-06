@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Trình quản lý bộ nhớ media</string>
+
+    <string name="media_results_title">Kết quả quét</string>
+
+    <string name="storage_info_title">Thông tin bộ nhớ</string>
+    <string name="reload">Tải lại</string>
+
+    <string name="internal_storage_label">Bộ nhớ điện thoại</string>
+    <string name="sd_storage_label">Thẻ nhớ</string>
+
+    <string name="storage_total_format">Tổng: %1$s</string>
+    <string name="storage_used_format">Đã dùng: %1$s (%2$d%%)</string>
+    <string name="storage_free_format">Còn trống: %1$s</string>
+
+    <string name="no_sdcard_available">Không phát hiện thẻ SD nào.</string>
+
+    <string name="sdcard_not_selected">Thư mục gốc thẻ SD: chưa chọn</string>
+    <string name="sdcard_selected">Thư mục gốc thẻ SD: đã chọn</string>
+    <string name="choose_sdcard">Chọn thẻ SD</string>
+
+    <string name="media_scan_title">Quét và chuyển media</string>
+    <string name="images_only">Chỉ ảnh</string>
+    <string name="videos_only">Chỉ video</string>
+    <string name="images_and_videos">Cả ảnh và video</string>
+
+    <string name="scan">Quét</string>
+    <string name="select_all">Chọn tất cả</string>
+    <string name="move_to_sdcard">Chuyển SD</string>
+
+    <string name="scan_summary_default">Đã tìm thấy 0 tệp. Đã chọn 0.</string>
+    <string name="no_media_found">Không tìm thấy media. Hãy quét lại.</string>
+
+    <string name="moving_progress_format">Đang chuyển %1$d / %2$d: %3$s</string>
+
+    <string name="media_thumbnail">Ảnh xem trước media</string>
+
+    <string name="notif_channel_move_name">Chuyển tệp media</string>
+    <string name="notif_channel_move_desc">Thông báo tiến trình chuyển ảnh và video sang thẻ SD.</string>
+
+    <string name="notif_move_in_progress_title">Đang chuyển tệp media</string>
+    <string name="notif_move_in_progress_text">Đã chuyển %1$d / %2$d: %3$s</string>
+    <string name="notif_move_preparing">Đang chuẩn bị danh sách tệp...</string>
+
+    <string name="notif_move_finished_title">Hoàn tất chuyển tệp media</string>
+    <string name="notif_move_finished_text">Đã chuyển %1$d tệp, lỗi %2$d tệp, tổng %3$d MB.</string>
+
+</resources>

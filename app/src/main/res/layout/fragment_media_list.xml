@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/rootMediaList"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:background="?android:colorBackground">
+
+    <!-- Header card -->
+    <com.google.android.material.card.MaterialCardView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:cardCornerRadius="12dp"
+        app:cardUseCompatPadding="true"
+        app:cardElevation="2dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:id="@+id/textScanTitle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Kết quả quét"
+                    android:textStyle="bold"
+                    android:textSize="18sp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/buttonBack"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Quay lại" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/textSdCardUriStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Thư mục gốc thẻ SD: đã chọn"
+                android:textAppearance="?attr/textAppearanceBody2" />
+
+            <TextView
+                android:id="@+id/textSdRootPath"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textColor="@android:color/darker_gray"
+                android:textSize="12sp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:visibility="gone" />
+
+            <ProgressBar
+                android:id="@+id/progressScan"
+                style="?android:attr/progressBarStyleSmall"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/textScanSummary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/scan_summary_default"
+                android:textAppearance="?attr/textAppearanceBody2" />
+
+            <ProgressBar
+                android:id="@+id/progressMove"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:max="100"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/textMoveProgress"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text=""
+                android:textAppearance="?attr/textAppearanceBody2"
+                android:visibility="gone" />
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
+    <!-- Action buttons -->
+    <LinearLayout
+        android:id="@+id/layoutButtons"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:orientation="horizontal"
+        android:weightSum="2">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/buttonSelectAll"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp"
+            android:layout_weight="1"
+            android:text="@string/select_all" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/buttonMove"
+            style="@style/Widget.MaterialComponents.Button"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:text="@string/move_to_sdcard" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/textEmpty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="center_horizontal"
+        android:text="@string/no_media_found"
+        android:textAppearance="?attr/textAppearanceBody2"
+        android:visibility="gone" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recyclerMedia"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="8dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:paddingBottom="8dp" />
+
+</LinearLayout>
