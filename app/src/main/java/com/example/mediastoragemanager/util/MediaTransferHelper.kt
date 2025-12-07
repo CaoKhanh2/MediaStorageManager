@@ -10,7 +10,7 @@ import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
 import java.io.Serializable
 
-// DTO dùng để serialize an toàn (tránh lỗi Uri của Android không hỗ trợ Serializable)
+// Internal DTO for safe serialization (since Android Uri is not Serializable by default)
 private data class MediaFileTransferDto(
     val id: Long,
     val uriString: String,
@@ -28,12 +28,12 @@ object MediaTransferHelper {
     private const val TAG = "MediaTransferHelper"
 
     /**
-     * Ghi danh sách file vào bộ nhớ đệm (Cache)
+     * Save the list of selected files to app cache.
      */
     fun saveSelection(context: Context, files: List<MediaFile>): Boolean {
         return try {
             val file = File(context.cacheDir, CACHE_FILE_NAME)
-            // Chuyển đổi sang DTO
+            // Convert Domain Model to DTO
             val dtoList = files.map {
                 MediaFileTransferDto(
                     it.id, it.uri.toString(), it.displayName, it.sizeBytes,
@@ -52,7 +52,7 @@ object MediaTransferHelper {
     }
 
     /**
-     * Đọc danh sách file từ bộ nhớ đệm
+     * Load the list of selected files from app cache.
      */
     fun loadSelection(context: Context): List<MediaFile>? {
         val file = File(context.cacheDir, CACHE_FILE_NAME)
@@ -63,7 +63,7 @@ object MediaTransferHelper {
                 @Suppress("UNCHECKED_CAST")
                 val dtoList = stream.readObject() as List<MediaFileTransferDto>
 
-                // Chuyển đổi ngược từ DTO sang Model
+                // Convert DTO back to Domain Model
                 dtoList.map { dto ->
                     MediaFile(
                         id = dto.id,
@@ -75,7 +75,7 @@ object MediaTransferHelper {
                         fullPath = dto.fullPath,
                         lastModifiedMillis = dto.lastModifiedMillis,
                         type = dto.type,
-                        isSelected = true // Mặc định là true vì đang trong list selected
+                        isSelected = true // Default to true since they are in the selected list
                     )
                 }
             }
@@ -86,7 +86,7 @@ object MediaTransferHelper {
     }
 
     /**
-     * Xóa cache sau khi dùng xong để giải phóng bộ nhớ
+     * Clear cache after operation is complete.
      */
     fun clearSelection(context: Context) {
         try {

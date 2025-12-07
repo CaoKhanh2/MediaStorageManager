@@ -3,7 +3,6 @@ package com.example.mediastoragemanager.data
 import android.content.ContentUris
 import android.content.Context
 import android.net.Uri
-import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
@@ -11,8 +10,6 @@ import com.example.mediastoragemanager.model.MediaFile
 import com.example.mediastoragemanager.model.MediaType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 
@@ -28,10 +25,129 @@ class MediaRepository(private val context: Context) {
         private const val TAG = "MediaRepository"
     }
 
-    // Simple stream copy helper used by moveMediaToSdCard
+    /**
+     * Scan media from internal storage (Images & Videos).
+     */
+    suspend fun scanMedia(includeImages: Boolean, includeVideos: Boolean): List<MediaFile> = withContext(Dispatchers.IO) {
+        val mediaList = mutableListOf<MediaFile>()
+        val contentResolver = context.contentResolver
+
+        // 1. Scan Images
+        if (includeImages) {
+            val imageUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            val projection = arrayOf(
+                MediaStore.Images.Media._ID,
+                MediaStore.Images.Media.DISPLAY_NAME,
+                MediaStore.Images.Media.SIZE,
+                MediaStore.Images.Media.MIME_TYPE,
+                MediaStore.Images.Media.DATA,
+                MediaStore.Images.Media.DATE_MODIFIED,
+                MediaStore.Images.Media.RELATIVE_PATH
+            )
+            // Only select files in internal storage path to avoid duplicates or external SD card files
+            val selection = "${MediaStore.Images.Media.DATA} LIKE ?"
+            val selectionArgs = arrayOf("/storage/emulated/0/%")
+
+            try {
+                contentResolver.query(
+                    imageUri,
+                    projection,
+                    selection,
+                    selectionArgs,
+                    "${MediaStore.Images.Media.DATE_MODIFIED} DESC"
+                )?.use { cursor ->
+                    val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                    val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
+                    val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
+                    val mimeCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.MIME_TYPE)
+                    val pathCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA)
+                    val dateCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_MODIFIED)
+                    val relPathCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.RELATIVE_PATH)
+
+                    while (cursor.moveToNext()) {
+                        val id = cursor.getLong(idCol)
+                        val uri = ContentUris.withAppendedId(imageUri, id)
+                        val name = cursor.getString(nameCol) ?: "Unknown"
+                        val size = cursor.getLong(sizeCol)
+                        val mime = cursor.getString(mimeCol)
+                        val path = cursor.getString(pathCol)
+                        val date = cursor.getLong(dateCol) * 1000L
+                        val relPath = cursor.getString(relPathCol)
+
+                        mediaList.add(
+                            MediaFile(
+                                id, uri, name, size, mime, relPath, path, date, MediaType.IMAGE
+                            )
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error scanning images", e)
+            }
+        }
+
+        // 2. Scan Videos
+        if (includeVideos) {
+            val videoUri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            val projection = arrayOf(
+                MediaStore.Video.Media._ID,
+                MediaStore.Video.Media.DISPLAY_NAME,
+                MediaStore.Video.Media.SIZE,
+                MediaStore.Video.Media.MIME_TYPE,
+                MediaStore.Video.Media.DATA,
+                MediaStore.Video.Media.DATE_MODIFIED,
+                MediaStore.Video.Media.RELATIVE_PATH
+            )
+            val selection = "${MediaStore.Video.Media.DATA} LIKE ?"
+            val selectionArgs = arrayOf("/storage/emulated/0/%")
+
+            try {
+                contentResolver.query(
+                    videoUri,
+                    projection,
+                    selection,
+                    selectionArgs,
+                    "${MediaStore.Video.Media.DATE_MODIFIED} DESC"
+                )?.use { cursor ->
+                    val idCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+                    val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
+                    val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.SIZE)
+                    val mimeCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.MIME_TYPE)
+                    val pathCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATA)
+                    val dateCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_MODIFIED)
+                    val relPathCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.RELATIVE_PATH)
+
+                    while (cursor.moveToNext()) {
+                        val id = cursor.getLong(idCol)
+                        val uri = ContentUris.withAppendedId(videoUri, id)
+                        val name = cursor.getString(nameCol) ?: "Unknown"
+                        val size = cursor.getLong(sizeCol)
+                        val mime = cursor.getString(mimeCol)
+                        val path = cursor.getString(pathCol)
+                        val date = cursor.getLong(dateCol) * 1000L
+                        val relPath = cursor.getString(relPathCol)
+
+                        mediaList.add(
+                            MediaFile(
+                                id, uri, name, size, mime, relPath, path, date, MediaType.VIDEO
+                            )
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error scanning videos", e)
+            }
+        }
+
+        return@withContext mediaList
+    }
+
+    /**
+     * Copy stream data efficiently using a 64KB buffer.
+     */
     private fun copyStream(input: InputStream, output: OutputStream): Long {
         var total = 0L
-        val buffer = ByteArray(64 * 1024) // Tăng buffer lên 64KB (tối ưu cho Video)
+        val buffer = ByteArray(64 * 1024) // 64KB buffer optimized for video
         var read: Int
         while (input.read(buffer).also { read = it } != -1) {
             output.write(buffer, 0, read)
@@ -42,197 +158,7 @@ class MediaRepository(private val context: Context) {
     }
 
     /**
-     * Xóa file gốc dùng ContentResolver (Phiên bản mới nhận Uri)
-     */
-    private fun deleteOriginalFile(uri: Uri): Boolean {
-        return try {
-            context.contentResolver.delete(uri, null, null) > 0
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to delete original file: $uri", e)
-            false
-        }
-    }
-
-    /**
-     * Deletes a row in MediaStore by ID if direct delete by Uri did not work.
-     */
-    private fun deleteFromMediaStoreById(id: Long, type: MediaType): Boolean {
-        return try {
-            val collectionUri = when (type) {
-                MediaType.IMAGE -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-                MediaType.VIDEO -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-            }
-            val where = "${MediaStore.MediaColumns._ID}=?"
-            val args = arrayOf(id.toString())
-            val rows = context.contentResolver.delete(collectionUri, where, args)
-            rows > 0
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to delete from MediaStore by id", e)
-            false
-        }
-    }
-
-    /**
-     * Scan internal primary external storage media using MediaStore.
-     * includeImages/includeVideos decide which collections to query.
-     */
-    suspend fun scanMedia(
-        includeImages: Boolean,
-        includeVideos: Boolean
-    ): List<MediaFile> = withContext(Dispatchers.IO) {
-        val result = mutableListOf<MediaFile>()
-
-        // On Android 10+ use the primary external volume (internal shared storage)
-        // so that files on removable SD card are not included.
-        val imagesCollectionUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        } else {
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-        }
-
-        val videosCollectionUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        } else {
-            MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-        }
-
-        if (includeImages) {
-            result += queryCollection(imagesCollectionUri, MediaType.IMAGE)
-        }
-        if (includeVideos) {
-            result += queryCollection(videosCollectionUri, MediaType.VIDEO)
-        }
-
-        // Extra safety: keep only files clearly on internal shared storage
-        val filtered = result.filter { file ->
-            val path = file.fullPath
-            if (path == null) {
-                // If path is unknown (scoped storage), assume it is on primary storage
-                true
-            } else {
-                path.startsWith("/storage/emulated/0/") ||
-                        path.startsWith("/sdcard/") ||
-                        path.startsWith("/mnt/sdcard/")
-            }
-        }
-
-        filtered.sortedBy { it.displayName.lowercase() }
-    }
-
-    private fun queryCollection(
-        collectionUri: Uri,
-        type: MediaType
-    ): List<MediaFile> {
-        val resolver = context.contentResolver
-        val items = mutableListOf<MediaFile>()
-
-        val projection = arrayOf(
-            MediaStore.MediaColumns._ID,
-            MediaStore.MediaColumns.DISPLAY_NAME,
-            MediaStore.MediaColumns.SIZE,
-            MediaStore.MediaColumns.MIME_TYPE,
-            MediaStore.MediaColumns.RELATIVE_PATH, // Android Q+
-            MediaStore.MediaColumns.DATA,          // Deprecated but useful for older devices
-            MediaStore.MediaColumns.DATE_MODIFIED
-        )
-
-        val selection = null
-        val selectionArgs = null
-        val sortOrder = "${MediaStore.MediaColumns.DATE_MODIFIED} DESC"
-
-        try {
-            resolver.query(
-                collectionUri,
-                projection,
-                selection,
-                selectionArgs,
-                sortOrder
-            )?.use { cursor ->
-                val idCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
-                val nameCol =
-                    cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
-                val sizeCol =
-                    cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
-                val mimeCol =
-                    cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
-                val relPathCol =
-                    cursor.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
-                val dataCol =
-                    cursor.getColumnIndex(MediaStore.MediaColumns.DATA)
-                val dateModifiedCol =
-                    cursor.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
-
-                while (cursor.moveToNext()) {
-                    val id = cursor.getLong(idCol)
-                    val displayName = cursor.getString(nameCol) ?: "Unknown"
-                    val sizeBytes = cursor.getLong(sizeCol)
-                    val mimeType = if (mimeCol != -1 && !cursor.isNull(mimeCol)) {
-                        cursor.getString(mimeCol)
-                    } else {
-                        null
-                    }
-
-                    val relativePath = if (relPathCol != -1 && !cursor.isNull(relPathCol)) {
-                        cursor.getString(relPathCol)
-                    } else {
-                        null
-                    }
-
-                    val fullPath = if (dataCol != -1 && !cursor.isNull(dataCol)) {
-                        // For older devices, DATA gives full filesystem path
-                        cursor.getString(dataCol)
-                    } else {
-                        // For newer devices with scoped storage, approximate full path
-                        if (relativePath != null) {
-                            "/storage/emulated/0/$relativePath$displayName"
-                        } else {
-                            null
-                        }
-                    }
-
-                    val dateModifiedSeconds =
-                        if (dateModifiedCol != -1 && !cursor.isNull(dateModifiedCol)) {
-                            cursor.getLong(dateModifiedCol)
-                        } else {
-                            0L
-                        }
-                    val lastModifiedMillis = dateModifiedSeconds * 1000L
-
-                    val contentUri = ContentUris.withAppendedId(collectionUri, id)
-
-                    items.add(
-                        MediaFile(
-                            id = id,
-                            uri = contentUri,
-                            displayName = displayName,
-                            sizeBytes = sizeBytes,
-                            mimeType = mimeType,
-                            relativePath = relativePath,
-                            fullPath = fullPath,
-                            lastModifiedMillis = lastModifiedMillis,
-                            type = type
-                        )
-                    )
-                }
-            }
-        } catch (e: SecurityException) {
-            // If permissions are missing, avoid crashing and just log the issue.
-            Log.e(TAG, "SecurityException querying MediaStore for $collectionUri", e)
-            return items
-        } catch (e: Exception) {
-            Log.e(TAG, "Unexpected error querying MediaStore for $collectionUri", e)
-            return items
-        }
-
-        return items
-    }
-
-    /**
-     * Move selected media files to SD card using SAF.
-     * Preserves directory structure based on relativePath when available.
-     */
-    /**
-     * Di chuyển media sang thẻ nhớ (SD Card)
+     * Move media files to SD Card using Storage Access Framework (SAF).
      */
     suspend fun moveMediaToSdCard(
         files: List<MediaFile>,
@@ -246,7 +172,7 @@ class MediaRepository(private val context: Context) {
         val total = files.size
         val resolver = context.contentResolver
 
-        // Lấy DocumentFile gốc từ URI
+        // Get DocumentFile root from the URI selected by user
         val sdRoot = DocumentFile.fromTreeUri(context, sdRootUri)
 
         if (sdRoot == null || !sdRoot.canWrite()) {
@@ -259,7 +185,7 @@ class MediaRepository(private val context: Context) {
 
             var targetFile: DocumentFile? = null
             try {
-                // [SỬA LỖI TẠI ĐÂY] Truyền 'file.relativePath' (String) thay vì 'file' (Object)
+                // 1. Create or get target directory (based on relative path)
                 val targetFolder = getOrCreateTargetDirectory(sdRoot, file.relativePath)
 
                 if (targetFolder == null || !targetFolder.isDirectory) {
@@ -268,7 +194,7 @@ class MediaRepository(private val context: Context) {
                     return@forEachIndexed
                 }
 
-                // [SỬA LỖI TẠI ĐÂY] Truyền displayName và mimeType thay vì 'file'
+                // 2. Create target file (Handle name conflicts)
                 targetFile = createTargetFile(targetFolder, file.displayName, file.mimeType)
 
                 if (targetFile == null) {
@@ -277,7 +203,7 @@ class MediaRepository(private val context: Context) {
                     return@forEachIndexed
                 }
 
-                // Copy dữ liệu
+                // 3. Copy data
                 val input = resolver.openInputStream(file.uri)
                 val output = resolver.openOutputStream(targetFile.uri)
 
@@ -294,6 +220,7 @@ class MediaRepository(private val context: Context) {
                 input.use { inp ->
                     output.use { out ->
                         val bytes = copyStream(inp, out)
+                        // If original file size > 0 but copied 0 bytes, it's an error
                         if (bytes > 0 || file.sizeBytes == 0L) {
                             successCopy = true
                         }
@@ -301,17 +228,19 @@ class MediaRepository(private val context: Context) {
                 }
 
                 if (!successCopy) {
-                    Log.e(TAG, "Copy failed for ${file.displayName}")
+                    Log.e(TAG, "Copy stream returned 0 bytes or failed for ${file.displayName}")
                     targetFile.delete()
                     failedCount++
                     return@forEachIndexed
                 }
 
-                // Xóa file gốc
+                // 4. Delete original file (ContentResolver delete)
                 if (deleteOriginalFile(file.uri)) {
                     movedCount++
                     totalMovedBytes += file.sizeBytes
                 } else {
+                    Log.w(TAG, "Copied but failed to delete original: ${file.displayName}")
+                    // Optional: keep the copy or delete it. Here we keep it but count as fail to be safe.
                     failedCount++
                 }
 
@@ -325,15 +254,14 @@ class MediaRepository(private val context: Context) {
         MoveSummary(movedCount, failedCount, totalMovedBytes)
     }
 
+    // --- HELPER METHODS ---
+
     /**
-     * Wrapper used by moveMediaToSdCard to get or create the target directory on SD card
-     * that matches the original media relative path.
+     * Create directory structure based on relative path.
      */
     private fun getOrCreateTargetDirectory(root: DocumentFile, relativePath: String?): DocumentFile? {
-        // Nếu không có đường dẫn con, trả về thư mục gốc
         if (relativePath.isNullOrEmpty()) return root
 
-        // Chuẩn hóa path: bỏ dấu / ở đầu và cuối
         val cleanPath = relativePath.trim('/')
         if (cleanPath.isEmpty()) return root
 
@@ -341,24 +269,21 @@ class MediaRepository(private val context: Context) {
         var currentDir = root
 
         for (part in parts) {
-            // Tìm xem thư mục/file có tên này đã tồn tại chưa
             val existing = currentDir.findFile(part)
 
             if (existing != null) {
                 if (existing.isDirectory) {
-                    // Nếu đã có thư mục -> Đi tiếp vào trong
                     currentDir = existing
                 } else {
-                    // LỖI: Đã có FILE trùng tên với THƯ MỤC định tạo
+                    // Conflict: A FILE exists with the same name as the DIRECTORY we want to create
                     Log.e(TAG, "Conflict: '$part' exists but is a FILE. Cannot create directory.")
                     return null
                 }
             } else {
-                // Nếu chưa có -> Tạo thư mục mới
+                // Create new directory
                 val created = currentDir.createDirectory(part)
                 if (created == null) {
-                    // LỖI: Hệ thống từ chối tạo thư mục (Thường do sai quyền Write)
-                    Log.e(TAG, "Failed to create directory '$part' inside '${currentDir.name}'. Check SD Card permissions.")
+                    Log.e(TAG, "Failed to create directory '$part'. Check permissions.")
                     return null
                 }
                 currentDir = created
@@ -368,16 +293,17 @@ class MediaRepository(private val context: Context) {
     }
 
     /**
-     * Creates the target DocumentFile on SD card, handling name conflicts by
-     * generating a new name with a timestamp suffix.
+     * Create new file, auto-rename if conflict exists (e.g., video.mp4 -> video (1).mp4).
      */
     private fun createTargetFile(dir: DocumentFile, displayName: String, mimeType: String?): DocumentFile? {
         val mime = mimeType ?: "application/octet-stream"
 
+        // If file doesn't exist, create it directly
         if (dir.findFile(displayName) == null) {
             return dir.createFile(mime, displayName)
         }
 
+        // If file exists, append a counter to the name
         val nameWithoutExt = displayName.substringBeforeLast('.')
         val ext = displayName.substringAfterLast('.', "")
         val extWithDot = if (ext.isNotEmpty()) ".$ext" else ""
@@ -393,97 +319,14 @@ class MediaRepository(private val context: Context) {
         return dir.createFile(mime, newName)
     }
 
-    private fun ensureTargetDirectory(
-        rootDoc: DocumentFile,
-        file: MediaFile
-    ): DocumentFile {
-        // Prefer RELATIVE_PATH if available (Android 10+)
-        val relative = when {
-            !file.relativePath.isNullOrBlank() -> file.relativePath
-            !file.fullPath.isNullOrBlank() -> {
-                val path = file.fullPath
-                path.substringAfter("/storage/emulated/0/", "")
-                    .substringBeforeLast('/', "")
-            }
-            else -> defaultRelativePathForType(file.type)
-        }
-
-        val cleaned = relative.trim().trim('/')
-
-        var current = rootDoc
-        if (cleaned.isNotEmpty()) {
-            val segments = cleaned.split("/").filter { it.isNotBlank() }
-            for (segment in segments) {
-                val existing = current.findFile(segment)
-                current = if (existing != null && existing.isDirectory) {
-                    existing
-                } else {
-                    current.createDirectory(segment) ?: current
-                }
-            }
-        }
-        return current
-    }
-
-    private fun defaultRelativePathForType(type: MediaType): String {
-        return when (type) {
-            MediaType.IMAGE -> "Pictures"
-            MediaType.VIDEO -> "Movies"
-        }
-    }
-
-    private fun generateSafeFileName(
-        parent: DocumentFile,
-        originalName: String
-    ): String {
-        val existing = parent.findFile(originalName)
-        if (existing == null) return originalName
-
-        val dotIndex = originalName.lastIndexOf('.')
-        val base = if (dotIndex != -1) originalName.substring(0, dotIndex) else originalName
-        val ext = if (dotIndex != -1) originalName.substring(dotIndex) else ""
-        val timestamp = System.currentTimeMillis()
-
-        return "${base}_$timestamp$ext"
-    }
-
-    private fun guessMimeType(file: MediaFile): String {
-        val lower = file.displayName.lowercase()
-        return when (file.type) {
-            MediaType.IMAGE -> when {
-                lower.endsWith(".png") -> "image/png"
-                lower.endsWith(".webp") -> "image/webp"
-                else -> "image/jpeg"
-            }
-
-            MediaType.VIDEO -> when {
-                lower.endsWith(".mp4") -> "video/mp4"
-                lower.endsWith(".mkv") -> "video/x-matroska"
-                else -> "video/*"
-            }
-        }
-    }
-
-    private fun copyFileContent(sourceUri: Uri, targetUri: Uri): Boolean {
-        val resolver = context.contentResolver
+    /**
+     * Delete original file using ContentResolver.
+     */
+    private fun deleteOriginalFile(uri: Uri): Boolean {
         return try {
-            resolver.openInputStream(sourceUri).use { input ->
-                resolver.openOutputStream(targetUri).use { output ->
-                    if (input == null || output == null) {
-                        throw IOException("Input or output stream is null")
-                    }
-                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                    var read = input.read(buffer)
-                    while (read != -1) {
-                        output.write(buffer, 0, read)
-                        read = input.read(buffer)
-                    }
-                    output.flush()
-                }
-            }
-            true
-        } catch (e: IOException) {
-            Log.e(TAG, "Error copying file from $sourceUri to $targetUri", e)
+            context.contentResolver.delete(uri, null, null) > 0
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to delete original file: $uri", e)
             false
         }
     }

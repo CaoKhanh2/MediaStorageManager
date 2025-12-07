@@ -63,11 +63,11 @@ class MoveForegroundService : Service() {
             return START_NOT_STICKY
         }
 
-        // [QUAN TRỌNG] FIX CRASH: Phải gọi startForeground NGAY LẬP TỨC!
-        // Android yêu cầu phải có thông báo trong vòng 5s kể từ khi startForegroundService được gọi.
+        // [IMPORTANT] Fix Crash: Must call startForeground IMMEDIATELY!
+        // Android requires a notification within 5 seconds of startForegroundService call.
         val initialNotification = buildProgressNotification(0, 0, null)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Android 14 yêu cầu khai báo type nếu có (dataSync)
+            // Android 14+ requires specifying foreground service type (dataSync)
             try {
                 startForeground(
                     NOTIFICATION_ID,
@@ -75,21 +75,21 @@ class MoveForegroundService : Service() {
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
                 )
             } catch (e: Exception) {
-                // Fallback nếu manifest chưa khai báo type
+                // Fallback if manifest is missing type
                 startForeground(NOTIFICATION_ID, initialNotification)
             }
         } else {
             startForeground(NOTIFICATION_ID, initialNotification)
         }
 
-        // Sau khi đã an toàn với hệ thống, mới tiến hành load dữ liệu
+        // Load data safely after service is foregrounded
         val files: List<MediaFile> = MediaTransferHelper.loadSelection(applicationContext) ?: emptyList()
         val sdUri: Uri? = intent.getStringExtra(EXTRA_SD_URI)?.let(Uri::parse)
 
         if (files.isEmpty() || sdUri == null) {
             Log.e(TAG, "No files found in cache or SD card uri missing")
 
-            // Gửi broadcast báo lỗi về UI để tắt loading
+            // Notify UI to stop loading state
             localBroadcast.sendBroadcast(
                 Intent(ACTION_MOVE_FINISHED).apply {
                     putExtra(EXTRA_FINISHED_MOVED, 0)
@@ -98,14 +98,14 @@ class MoveForegroundService : Service() {
                 }
             )
 
-            // Dọn dẹp cache và dừng service an toàn
+            // Cleanup and stop service
             MediaTransferHelper.clearSelection(applicationContext)
-            stopForeground(STOP_FOREGROUND_REMOVE) // Xóa thông báo "Preparing"
+            stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf(startId)
             return START_NOT_STICKY
         }
 
-        // Cập nhật lại thông báo với tổng số file thực tế
+        // Update notification with real file count
         val nm = getSystemService<NotificationManager>()
         nm?.notify(NOTIFICATION_ID, buildProgressNotification(0, files.size, null))
 
@@ -127,7 +127,7 @@ class MoveForegroundService : Service() {
             } catch (e: Exception) {
                 Log.e(TAG, "Error while moving files", e)
             } finally {
-                // Gửi broadcast kết thúc
+                // Send finish broadcast
                 val finishedIntent = Intent(ACTION_MOVE_FINISHED).apply {
                     putExtra(EXTRA_FINISHED_MOVED, summary.movedCount)
                     putExtra(EXTRA_FINISHED_FAILED, summary.failedCount)
@@ -135,13 +135,13 @@ class MoveForegroundService : Service() {
                 }
                 localBroadcast.sendBroadcast(finishedIntent)
 
-                // Hiện thông báo kết thúc
+                // Show finished notification
                 nm?.notify(NOTIFICATION_ID, buildFinishedNotification(summary))
 
-                // Dọn dẹp cache
+                // Clean cache
                 MediaTransferHelper.clearSelection(applicationContext)
 
-                // Dừng service (nhưng giữ thông báo kết thúc để user xem)
+                // Stop service (detach notification)
                 stopForeground(STOP_FOREGROUND_DETACH)
                 stopSelf(startId)
             }
@@ -192,7 +192,7 @@ class MoveForegroundService : Service() {
             .setOnlyAlertOnce(true)
             .setOngoing(true)
             .setProgress(max, progress, total == 0)
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE) // Hiện ngay lập tức
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
     }
 
