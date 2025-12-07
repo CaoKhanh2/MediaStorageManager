@@ -10,7 +10,7 @@ import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
 import java.io.Serializable
 
-// Internal DTO for safe serialization (since Android Uri is not Serializable by default)
+// Internal DTO to safely serialize MediaFile (since Uri is not Serializable by default in all Android versions)
 private data class MediaFileTransferDto(
     val id: Long,
     val uriString: String,
@@ -28,12 +28,13 @@ object MediaTransferHelper {
     private const val TAG = "MediaTransferHelper"
 
     /**
-     * Save the list of selected files to app cache.
+     * Saves the list of selected files to the app's cache directory.
+     * This avoids TransactionTooLargeException when passing data to the Service.
      */
     fun saveSelection(context: Context, files: List<MediaFile>): Boolean {
         return try {
             val file = File(context.cacheDir, CACHE_FILE_NAME)
-            // Convert Domain Model to DTO
+            // Map Domain Model to DTO
             val dtoList = files.map {
                 MediaFileTransferDto(
                     it.id, it.uri.toString(), it.displayName, it.sizeBytes,
@@ -52,7 +53,7 @@ object MediaTransferHelper {
     }
 
     /**
-     * Load the list of selected files from app cache.
+     * Loads the list of selected files from the cache directory.
      */
     fun loadSelection(context: Context): List<MediaFile>? {
         val file = File(context.cacheDir, CACHE_FILE_NAME)
@@ -63,7 +64,7 @@ object MediaTransferHelper {
                 @Suppress("UNCHECKED_CAST")
                 val dtoList = stream.readObject() as List<MediaFileTransferDto>
 
-                // Convert DTO back to Domain Model
+                // Map DTO back to Domain Model
                 dtoList.map { dto ->
                     MediaFile(
                         id = dto.id,
@@ -75,7 +76,7 @@ object MediaTransferHelper {
                         fullPath = dto.fullPath,
                         lastModifiedMillis = dto.lastModifiedMillis,
                         type = dto.type,
-                        isSelected = true // Default to true since they are in the selected list
+                        isSelected = true // Default to true as they are part of the selection
                     )
                 }
             }
@@ -86,7 +87,7 @@ object MediaTransferHelper {
     }
 
     /**
-     * Clear cache after operation is complete.
+     * Clears the cache file after the operation is complete.
      */
     fun clearSelection(context: Context) {
         try {

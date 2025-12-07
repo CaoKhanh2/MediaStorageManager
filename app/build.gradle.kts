@@ -48,10 +48,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.8.6")
 
     implementation("androidx.recyclerview:recyclerview:1.3.2")
-
     implementation("androidx.documentfile:documentfile:1.0.1")
-
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("com.getkeepsafe.taptargetview:taptargetview:1.13.3")
 
     implementation("io.coil-kt:coil:2.7.0")
     implementation("io.coil-kt:coil:2.6.0")

@@ -13,13 +13,32 @@
         android:orientation="vertical"
         android:padding="16dp">
 
-        <!-- Storage information header -->
-        <TextView
-            android:id="@+id/textStorageTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/storage_info_title"
-            android:textAppearance="?attr/textAppearanceHeadline6" />
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <TextView
+                android:id="@+id/textStorageTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:text="@string/storage_info_title"
+                android:textAppearance="?attr/textAppearanceHeadline6"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toStartOf="@+id/btnHelp"/>
+
+            <ImageButton
+                android:id="@+id/btnHelp"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@android:drawable/ic_menu_help"
+                app:tint="@color/purple_500"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"/>
+        </androidx.constraintlayout.widget.ConstraintLayout>
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -44,7 +63,6 @@
                 android:visibility="gone" />
         </LinearLayout>
 
-        <!-- Internal storage card -->
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/cardInternal"
             android:layout_width="match_parent"
@@ -98,7 +116,6 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- SD card storage card -->
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/cardSd"
             android:layout_width="match_parent"
@@ -163,8 +180,8 @@
             android:textColor="@android:color/darker_gray"
             android:visibility="gone" />
 
-        <!-- SD card root selection -->
         <com.google.android.material.card.MaterialCardView
+            android:id="@+id/layoutSdCardSelection"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
@@ -173,7 +190,6 @@
             app:cardElevation="2dp">
 
             <LinearLayout
-                android:id="@+id/layoutSdCardSelection"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
@@ -182,7 +198,8 @@
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal">
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
 
                     <TextView
                         android:id="@+id/textSdCardUriStatus"
@@ -200,7 +217,6 @@
                         android:text="@string/choose_sdcard" />
                 </LinearLayout>
 
-                <!-- SD card root path -->
                 <TextView
                     android:id="@+id/textSdRootPath"
                     android:layout_width="match_parent"
@@ -214,7 +230,6 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- Media selection -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

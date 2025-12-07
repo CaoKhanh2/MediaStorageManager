@@ -26,7 +26,8 @@ class MediaRepository(private val context: Context) {
     }
 
     /**
-     * Scan media from internal storage (Images & Videos).
+     * Scans media files (Images & Videos) from the device's internal storage.
+     * Uses MediaStore API to query metadata.
      */
     suspend fun scanMedia(includeImages: Boolean, includeVideos: Boolean): List<MediaFile> = withContext(Dispatchers.IO) {
         val mediaList = mutableListOf<MediaFile>()
@@ -40,11 +41,11 @@ class MediaRepository(private val context: Context) {
                 MediaStore.Images.Media.DISPLAY_NAME,
                 MediaStore.Images.Media.SIZE,
                 MediaStore.Images.Media.MIME_TYPE,
-                MediaStore.Images.Media.DATA,
+                MediaStore.Images.Media.DATA, // Full path (Deprecated but useful for filtering)
                 MediaStore.Images.Media.DATE_MODIFIED,
                 MediaStore.Images.Media.RELATIVE_PATH
             )
-            // Only select files in internal storage path to avoid duplicates or external SD card files
+            // Filter: Only select files located in internal storage to avoid duplicates or external SD card files
             val selection = "${MediaStore.Images.Media.DATA} LIKE ?"
             val selectionArgs = arrayOf("/storage/emulated/0/%")
 
@@ -143,11 +144,12 @@ class MediaRepository(private val context: Context) {
     }
 
     /**
-     * Copy stream data efficiently using a 64KB buffer.
+     * Helper: Copies data from input stream to output stream.
+     * Uses a large 64KB buffer to optimize performance for large video files.
      */
     private fun copyStream(input: InputStream, output: OutputStream): Long {
         var total = 0L
-        val buffer = ByteArray(64 * 1024) // 64KB buffer optimized for video
+        val buffer = ByteArray(64 * 1024) // 64KB buffer
         var read: Int
         while (input.read(buffer).also { read = it } != -1) {
             output.write(buffer, 0, read)
@@ -158,7 +160,8 @@ class MediaRepository(private val context: Context) {
     }
 
     /**
-     * Move media files to SD Card using Storage Access Framework (SAF).
+     * Main function: Moves media files to the SD Card using Storage Access Framework (SAF).
+     * Preserves directory structure and handles name conflicts.
      */
     suspend fun moveMediaToSdCard(
         files: List<MediaFile>,
@@ -172,9 +175,10 @@ class MediaRepository(private val context: Context) {
         val total = files.size
         val resolver = context.contentResolver
 
-        // Get DocumentFile root from the URI selected by user
+        // Retrieve DocumentFile representing the SD Card root selected by the user
         val sdRoot = DocumentFile.fromTreeUri(context, sdRootUri)
 
+        // Validate write access
         if (sdRoot == null || !sdRoot.canWrite()) {
             Log.e(TAG, "SD Root is null or not writable: $sdRootUri")
             return@withContext MoveSummary(0, files.size, 0L)
@@ -185,7 +189,8 @@ class MediaRepository(private val context: Context) {
 
             var targetFile: DocumentFile? = null
             try {
-                // 1. Create or get target directory (based on relative path)
+                // Step 1: Create target directory structure based on relative path
+                // e.g., if original is in DCIM/Camera, ensure SDCard/DCIM/Camera exists
                 val targetFolder = getOrCreateTargetDirectory(sdRoot, file.relativePath)
 
                 if (targetFolder == null || !targetFolder.isDirectory) {
@@ -194,7 +199,7 @@ class MediaRepository(private val context: Context) {
                     return@forEachIndexed
                 }
 
-                // 2. Create target file (Handle name conflicts)
+                // Step 2: Create the target file (Auto-renames if conflict exists)
                 targetFile = createTargetFile(targetFolder, file.displayName, file.mimeType)
 
                 if (targetFile == null) {
@@ -203,7 +208,7 @@ class MediaRepository(private val context: Context) {
                     return@forEachIndexed
                 }
 
-                // 3. Copy data
+                // Step 3: Open streams and copy data
                 val input = resolver.openInputStream(file.uri)
                 val output = resolver.openOutputStream(targetFile.uri)
 
@@ -211,16 +216,18 @@ class MediaRepository(private val context: Context) {
                     Log.e(TAG, "Failed to open streams for ${file.displayName}")
                     input?.close()
                     output?.close()
+                    // Clean up the empty file created
                     targetFile.delete()
                     failedCount++
                     return@forEachIndexed
                 }
 
                 var successCopy = false
+                // Use 'use' block to automatically close streams
                 input.use { inp ->
                     output.use { out ->
                         val bytes = copyStream(inp, out)
-                        // If original file size > 0 but copied 0 bytes, it's an error
+                        // Verification: If original file had content but 0 bytes were copied, mark as failed
                         if (bytes > 0 || file.sizeBytes == 0L) {
                             successCopy = true
                         }
@@ -234,13 +241,13 @@ class MediaRepository(private val context: Context) {
                     return@forEachIndexed
                 }
 
-                // 4. Delete original file (ContentResolver delete)
+                // Step 4: Delete the original file (Perform the "Move" operation)
                 if (deleteOriginalFile(file.uri)) {
                     movedCount++
                     totalMovedBytes += file.sizeBytes
                 } else {
                     Log.w(TAG, "Copied but failed to delete original: ${file.displayName}")
-                    // Optional: keep the copy or delete it. Here we keep it but count as fail to be safe.
+                    // Decision: Count as failed to avoid data loss, keep the copy
                     failedCount++
                 }
 
@@ -257,11 +264,12 @@ class MediaRepository(private val context: Context) {
     // --- HELPER METHODS ---
 
     /**
-     * Create directory structure based on relative path.
+     * Recursively creates directories based on the relative path string.
      */
     private fun getOrCreateTargetDirectory(root: DocumentFile, relativePath: String?): DocumentFile? {
         if (relativePath.isNullOrEmpty()) return root
 
+        // Normalize path: remove leading/trailing slashes
         val cleanPath = relativePath.trim('/')
         if (cleanPath.isEmpty()) return root
 
@@ -275,15 +283,15 @@ class MediaRepository(private val context: Context) {
                 if (existing.isDirectory) {
                     currentDir = existing
                 } else {
-                    // Conflict: A FILE exists with the same name as the DIRECTORY we want to create
+                    // Critical Error: A FILE exists with the same name as the DIRECTORY we want to create
                     Log.e(TAG, "Conflict: '$part' exists but is a FILE. Cannot create directory.")
                     return null
                 }
             } else {
-                // Create new directory
+                // Directory doesn't exist, try to create it
                 val created = currentDir.createDirectory(part)
                 if (created == null) {
-                    Log.e(TAG, "Failed to create directory '$part'. Check permissions.")
+                    Log.e(TAG, "Failed to create directory '$part' inside '${currentDir.name}'. Check permissions.")
                     return null
                 }
                 currentDir = created
@@ -293,17 +301,18 @@ class MediaRepository(private val context: Context) {
     }
 
     /**
-     * Create new file, auto-rename if conflict exists (e.g., video.mp4 -> video (1).mp4).
+     * Creates a new file in the target directory.
+     * Automatically handles name conflicts by appending a counter (e.g., video (1).mp4).
      */
     private fun createTargetFile(dir: DocumentFile, displayName: String, mimeType: String?): DocumentFile? {
         val mime = mimeType ?: "application/octet-stream"
 
-        // If file doesn't exist, create it directly
+        // If file name is unique, create it directly
         if (dir.findFile(displayName) == null) {
             return dir.createFile(mime, displayName)
         }
 
-        // If file exists, append a counter to the name
+        // If conflict exists, generate a unique name
         val nameWithoutExt = displayName.substringBeforeLast('.')
         val ext = displayName.substringAfterLast('.', "")
         val extWithDot = if (ext.isNotEmpty()) ".$ext" else ""
@@ -320,7 +329,7 @@ class MediaRepository(private val context: Context) {
     }
 
     /**
-     * Delete original file using ContentResolver.
+     * Deletes the original file using ContentResolver.
      */
     private fun deleteOriginalFile(uri: Uri): Boolean {
         return try {

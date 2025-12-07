@@ -12,6 +12,7 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import com.example.mediastoragemanager.R
 import com.example.mediastoragemanager.data.MediaRepository
 import com.example.mediastoragemanager.data.StorageRepository
 import com.example.mediastoragemanager.model.MediaFile
@@ -62,7 +63,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
     val uiState: LiveData<MainUiState> = _uiState
 
-    // Receiver lắng nghe tiến độ từ Service
+    // Receiver to handle updates from MoveForegroundService
     private val moveProgressReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
@@ -81,11 +82,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val moved = intent.getIntExtra(MoveForegroundService.EXTRA_FINISHED_MOVED, 0)
                     val failed = intent.getIntExtra(MoveForegroundService.EXTRA_FINISHED_FAILED, 0)
                     val bytes = intent.getLongExtra(MoveForegroundService.EXTRA_FINISHED_BYTES, 0L)
+                    val mb = (bytes / (1024 * 1024)).toInt()
 
-                    val summaryText = "Moved $moved files, failed $failed files, " +
-                            "total moved size: ${bytes / (1024 * 1024)} MB."
+                    // [FIX] Use Vietnamese string resource for the result message
+                    // Using application context to get string resource
+                    val summaryText = try {
+                        getApplication<Application>().getString(
+                            R.string.notif_move_finished_text,
+                            moved, failed, mb
+                        )
+                    } catch (e: Exception) {
+                        "Đã chuyển $moved tệp, thất bại $failed tệp. Tổng dung lượng: $mb MB."
+                    }
 
-                    // Xóa các file đã move thành công khỏi danh sách hiển thị
+                    // Remove moved files from the list
                     val current = _uiState.value
                     val remaining = current?.mediaFiles?.filterNot { file ->
                         current.selectedIds.contains(file.id)
@@ -95,13 +105,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         isMoving = false,
                         mediaFiles = remaining,
                         selectedIds = emptySet(),
-                        scanSummaryText = "Found ${remaining.size} files. Selected 0.",
+                        scanSummaryText = "Tìm thấy ${remaining.size} tệp. Đã chọn 0.",
                         moveProcessed = 0,
                         moveTotal = 0,
                         moveCurrentFileName = null,
-                        moveResultMessage = summaryText
+                        moveResultMessage = summaryText // Trigger the dialog in UI
                     )
-                    // Cập nhật lại dung lượng bộ nhớ
+                    // Refresh storage info
                     loadStorageInfo()
                 }
             }
@@ -110,7 +120,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         loadStorageInfo()
-        // Đăng ký nhận broadcast khi ViewModel khởi tạo
+        // Register receiver
         val filter = IntentFilter().apply {
             addAction(MoveForegroundService.ACTION_MOVE_PROGRESS)
             addAction(MoveForegroundService.ACTION_MOVE_FINISHED)
@@ -120,7 +130,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
-        // Hủy đăng ký để tránh memory leak
         localBroadcastManager.unregisterReceiver(moveProgressReceiver)
     }
 
@@ -149,7 +158,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val includeVideos = (selectionMode == MediaSelectionMode.VIDEOS || selectionMode == MediaSelectionMode.BOTH)
 
         if (!includeImages && !includeVideos) {
-            _uiState.value = _uiState.value?.copy(errorMessage = "Please select at least one media type to scan.")
+            _uiState.value = _uiState.value?.copy(errorMessage = "Vui lòng chọn ít nhất một loại tệp để quét.")
             return
         }
 
@@ -162,7 +171,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 isScanning = false,
                 mediaFiles = files,
                 selectedIds = emptySet(),
-                scanSummaryText = "Found ${files.size} files. Selected 0."
+                scanSummaryText = "Tìm thấy ${files.size} tệp. Đã chọn 0."
             )
         }
     }
@@ -178,7 +187,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = current.copy(
             mediaFiles = newFiles,
             selectedIds = newSelected,
-            scanSummaryText = "Found ${newFiles.size} files. Selected ${newSelected.size}."
+            scanSummaryText = "Tìm thấy ${newFiles.size} tệp. Đã chọn ${newSelected.size}."
         )
     }
 
@@ -193,7 +202,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = current.copy(
             mediaFiles = newFiles,
             selectedIds = newSelected,
-            scanSummaryText = "Found ${newFiles.size} files. Selected ${newSelected.size}."
+            scanSummaryText = "Tìm thấy ${newFiles.size} tệp. Đã chọn ${newSelected.size}."
         )
     }
 
@@ -208,28 +217,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Chức năng chính: Di chuyển file sang thẻ SD
-     * Đã sửa: Dùng File Cache và Start Service
+     * Move selected media files to SD card using Foreground Service
      */
     fun moveSelectedToSdCard() {
         val current = _uiState.value ?: return
         val sdUri = current.sdCardUri
 
         if (sdUri == null) {
-            _uiState.value = current.copy(errorMessage = "Please choose SD card root before moving files.")
+            _uiState.value = current.copy(errorMessage = "Vui lòng chọn thẻ nhớ SD trước khi chuyển.")
             return
         }
 
         val filesToMove = current.mediaFiles.filter { current.selectedIds.contains(it.id) }
         if (filesToMove.isEmpty()) {
-            _uiState.value = current.copy(errorMessage = "Please select at least one file to move.")
+            _uiState.value = current.copy(errorMessage = "Vui lòng chọn ít nhất một tệp.")
             return
         }
 
         viewModelScope.launch {
             _uiState.value = current.copy(isMoving = true, errorMessage = null, moveResultMessage = null)
 
-            // 1. Lưu danh sách vào Cache
+            // 1. Save list to cache
             val saveSuccess = withContext(Dispatchers.IO) {
                 MediaTransferHelper.saveSelection(getApplication(), filesToMove)
             }
@@ -237,7 +245,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (!saveSuccess) {
                 _uiState.value = current.copy(
                     isMoving = false,
-                    errorMessage = "Failed to prepare files for moving."
+                    errorMessage = "Lỗi: Không thể chuẩn bị tệp để chuyển."
                 )
                 return@launch
             }

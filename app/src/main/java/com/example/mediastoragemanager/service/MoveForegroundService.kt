@@ -27,10 +27,12 @@ import kotlinx.coroutines.launch
 class MoveForegroundService : Service() {
 
     companion object {
+        // Actions for communicating with the UI
         const val ACTION_START_MOVE = "com.example.mediastoragemanager.action.START_MOVE"
         const val ACTION_MOVE_PROGRESS = "com.example.mediastoragemanager.action.MOVE_PROGRESS"
         const val ACTION_MOVE_FINISHED = "com.example.mediastoragemanager.action.MOVE_FINISHED"
 
+        // Extras keys
         const val EXTRA_SD_URI = "extra_sd_uri"
         const val EXTRA_PROGRESS_PROCESSED = "extra_progress_processed"
         const val EXTRA_PROGRESS_TOTAL = "extra_progress_total"
@@ -45,6 +47,7 @@ class MoveForegroundService : Service() {
         private const val TAG = "MoveForegroundService"
     }
 
+    // Service lifecycle scope
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var mediaRepository: MediaRepository
 
@@ -63,11 +66,11 @@ class MoveForegroundService : Service() {
             return START_NOT_STICKY
         }
 
-        // [IMPORTANT] Fix Crash: Must call startForeground IMMEDIATELY!
-        // Android requires a notification within 5 seconds of startForegroundService call.
+        // [CRITICAL] Fix for Android 14+ Crash:
+        // startForeground MUST be called immediately within 5 seconds of service start.
         val initialNotification = buildProgressNotification(0, 0, null)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Android 14+ requires specifying foreground service type (dataSync)
+            // Android 14 requires specifying the service type (dataSync) in code and manifest
             try {
                 startForeground(
                     NOTIFICATION_ID,
@@ -75,21 +78,22 @@ class MoveForegroundService : Service() {
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
                 )
             } catch (e: Exception) {
-                // Fallback if manifest is missing type
+                // Fallback for older Android versions or if type is missing
                 startForeground(NOTIFICATION_ID, initialNotification)
             }
         } else {
             startForeground(NOTIFICATION_ID, initialNotification)
         }
 
-        // Load data safely after service is foregrounded
+        // Now safe to perform heavy loading operations
         val files: List<MediaFile> = MediaTransferHelper.loadSelection(applicationContext) ?: emptyList()
         val sdUri: Uri? = intent.getStringExtra(EXTRA_SD_URI)?.let(Uri::parse)
 
+        // Validation: If data is missing, stop service gracefully
         if (files.isEmpty() || sdUri == null) {
             Log.e(TAG, "No files found in cache or SD card uri missing")
 
-            // Notify UI to stop loading state
+            // Notify UI to hide loading state
             localBroadcast.sendBroadcast(
                 Intent(ACTION_MOVE_FINISHED).apply {
                     putExtra(EXTRA_FINISHED_MOVED, 0)
@@ -98,25 +102,26 @@ class MoveForegroundService : Service() {
                 }
             )
 
-            // Cleanup and stop service
+            // Clean up and stop
             MediaTransferHelper.clearSelection(applicationContext)
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf(startId)
             return START_NOT_STICKY
         }
 
-        // Update notification with real file count
+        // Update notification with actual file count
         val nm = getSystemService<NotificationManager>()
         nm?.notify(NOTIFICATION_ID, buildProgressNotification(0, files.size, null))
 
         serviceScope.launch {
             var summary = MoveSummary(0, files.size, 0L)
             try {
+                // Start the heavy move operation
                 summary = mediaRepository.moveMediaToSdCard(files, sdUri) { processed, total, name ->
-                    // 1. Update Notification
+                    // 1. Update System Notification
                     nm?.notify(NOTIFICATION_ID, buildProgressNotification(processed, total, name))
 
-                    // 2. Update UI via Broadcast
+                    // 2. Send Broadcast to update UI
                     val progressIntent = Intent(ACTION_MOVE_PROGRESS).apply {
                         putExtra(EXTRA_PROGRESS_PROCESSED, processed)
                         putExtra(EXTRA_PROGRESS_TOTAL, total)
@@ -127,7 +132,7 @@ class MoveForegroundService : Service() {
             } catch (e: Exception) {
                 Log.e(TAG, "Error while moving files", e)
             } finally {
-                // Send finish broadcast
+                // Operation finished: Send final broadcast
                 val finishedIntent = Intent(ACTION_MOVE_FINISHED).apply {
                     putExtra(EXTRA_FINISHED_MOVED, summary.movedCount)
                     putExtra(EXTRA_FINISHED_FAILED, summary.failedCount)
@@ -135,13 +140,13 @@ class MoveForegroundService : Service() {
                 }
                 localBroadcast.sendBroadcast(finishedIntent)
 
-                // Show finished notification
+                // Show completion notification
                 nm?.notify(NOTIFICATION_ID, buildFinishedNotification(summary))
 
-                // Clean cache
+                // Clean up cache file
                 MediaTransferHelper.clearSelection(applicationContext)
 
-                // Stop service (detach notification)
+                // Stop service (but keep the finished notification visible)
                 stopForeground(STOP_FOREGROUND_DETACH)
                 stopSelf(startId)
             }
@@ -159,6 +164,7 @@ class MoveForegroundService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // Vietnamese Channel Name/Desc
             val channelName = getString(R.string.notif_channel_move_name)
             val description = getString(R.string.notif_channel_move_desc)
             val channel = NotificationChannel(
@@ -174,6 +180,7 @@ class MoveForegroundService : Service() {
     }
 
     private fun buildProgressNotification(processed: Int, total: Int, currentName: String?): Notification {
+        // Vietnamese Notification Title
         val title = getString(R.string.notif_move_in_progress_title)
         val content = if (total > 0) {
             val safeName = currentName ?: ""
@@ -199,6 +206,7 @@ class MoveForegroundService : Service() {
     private fun buildFinishedNotification(summary: MoveSummary): Notification {
         val mb = (summary.totalMovedBytes / (1024 * 1024)).toInt()
         val title = getString(R.string.notif_move_finished_title)
+        // Vietnamese Summary
         val text = getString(R.string.notif_move_finished_text, summary.movedCount, summary.failedCount, mb)
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
