@@ -3,6 +3,7 @@ package com.example.mediastoragemanager.model
 import android.net.Uri
 import android.os.Parcelable
 import kotlinx.parcelize.Parcelize
+import java.io.Serializable
 
 @Parcelize
 data class MediaFile(
@@ -16,4 +17,4 @@ data class MediaFile(
     val lastModifiedMillis: Long,
     val type: MediaType,
     val isSelected: Boolean = false
-) : Parcelable
+) : Parcelable, Serializable

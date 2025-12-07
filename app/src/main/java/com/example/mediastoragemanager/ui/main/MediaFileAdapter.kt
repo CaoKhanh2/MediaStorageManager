@@ -1,13 +1,16 @@
 package com.example.mediastoragemanager.ui.main
 
 import android.view.LayoutInflater
+import android.view.View
 import android.view.ViewGroup
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import coil.load
+import com.example.mediastoragemanager.R
 import com.example.mediastoragemanager.databinding.ItemMediaFileBinding
 import com.example.mediastoragemanager.model.MediaFile
+import com.example.mediastoragemanager.model.MediaType // Đừng quên import này
 import com.example.mediastoragemanager.util.FormatUtils
 
 class MediaFileAdapter(
@@ -40,10 +43,22 @@ class MediaFileAdapter(
         val item = getItem(position)
         val context = holder.itemView.context
 
+        // 1. Load Thumbnail (Ảnh/Video)
         holder.binding.imageThumbnail.load(item.uri) {
             crossfade(true)
+            // Thêm hình chờ và hình lỗi để trải nghiệm mượt hơn
+            placeholder(R.drawable.ic_launcher_foreground)
+            error(R.drawable.ic_launcher_background)
         }
 
+        // 2. [MỚI] Hiển thị icon Play nếu là Video
+        if (item.type == MediaType.VIDEO) {
+            holder.binding.iconPlayOverlay.visibility = View.VISIBLE
+        } else {
+            holder.binding.iconPlayOverlay.visibility = View.GONE
+        }
+
+        // 3. Các thông tin khác giữ nguyên
         holder.binding.textName.text = item.displayName
         holder.binding.textPath.text = item.fullPath ?: item.relativePath ?: "Unknown path"
 
@@ -51,6 +66,7 @@ class MediaFileAdapter(
         val dateText = FormatUtils.formatDateTime(item.lastModifiedMillis)
         holder.binding.textSizeAndDate.text = "$sizeText • $dateText"
 
+        // Xử lý Checkbox (Tránh lỗi tái sử dụng View trong RecyclerView)
         holder.binding.checkboxSelect.setOnCheckedChangeListener(null)
         holder.binding.checkboxSelect.isChecked = item.isSelected
 

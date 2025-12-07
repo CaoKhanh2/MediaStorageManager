@@ -16,13 +16,28 @@
         android:orientation="horizontal"
         android:padding="8dp">
 
-        <ImageView
-            android:id="@+id/imageThumbnail"
+        <FrameLayout
             android:layout_width="60dp"
-            android:layout_height="60dp"
-            android:contentDescription="@string/media_thumbnail"
-            android:scaleType="centerCrop"
-            android:background="@android:color/darker_gray" />
+            android:layout_height="60dp">
+
+            <ImageView
+                android:id="@+id/imageThumbnail"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:contentDescription="@string/media_thumbnail"
+                android:scaleType="centerCrop"
+                android:background="@android:color/darker_gray" />
+
+            <ImageView
+                android:id="@+id/iconPlayOverlay"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_gravity="center"
+                android:src="@android:drawable/ic_media_play"
+                android:visibility="gone"
+                app:tint="@android:color/white" />
+
+        </FrameLayout>
 
         <LinearLayout
             android:layout_width="0dp"

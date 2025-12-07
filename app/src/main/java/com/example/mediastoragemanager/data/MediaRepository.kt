@@ -31,43 +31,24 @@ class MediaRepository(private val context: Context) {
     // Simple stream copy helper used by moveMediaToSdCard
     private fun copyStream(input: InputStream, output: OutputStream): Long {
         var total = 0L
-        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-        while (true) {
-            val read = input.read(buffer)
-            if (read <= 0) break
+        val buffer = ByteArray(64 * 1024) // Tăng buffer lên 64KB (tối ưu cho Video)
+        var read: Int
+        while (input.read(buffer).also { read = it } != -1) {
             output.write(buffer, 0, read)
             total += read
         }
+        output.flush()
         return total
     }
 
-    private fun deleteOriginalFile(mediaFile: MediaFile): Boolean {
-        // Try delete by absolute path first if available
-        mediaFile.fullPath?.let { path ->
-            try {
-                val file = File(path)
-                if (file.exists()) {
-                    if (file.delete()) {
-                        // Also try to clean up MediaStore entry
-                        deleteFromMediaStoreById(mediaFile.id, mediaFile.type)
-                        return true
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to delete by File for ${mediaFile.displayName}", e)
-            }
-        }
-
-        // Fallback: try via content resolver
+    /**
+     * Xóa file gốc dùng ContentResolver (Phiên bản mới nhận Uri)
+     */
+    private fun deleteOriginalFile(uri: Uri): Boolean {
         return try {
-            val rows = context.contentResolver.delete(mediaFile.uri, null, null)
-            if (rows > 0) {
-                true
-            } else {
-                deleteFromMediaStoreById(mediaFile.id, mediaFile.type)
-            }
+            context.contentResolver.delete(uri, null, null) > 0
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to delete by content resolver for ${mediaFile.displayName}", e)
+            Log.e(TAG, "Failed to delete original file: $uri", e)
             false
         }
     }
@@ -250,6 +231,9 @@ class MediaRepository(private val context: Context) {
      * Move selected media files to SD card using SAF.
      * Preserves directory structure based on relativePath when available.
      */
+    /**
+     * Di chuyển media sang thẻ nhớ (SD Card)
+     */
     suspend fun moveMediaToSdCard(
         files: List<MediaFile>,
         sdRootUri: Uri,
@@ -261,60 +245,79 @@ class MediaRepository(private val context: Context) {
 
         val total = files.size
         val resolver = context.contentResolver
+
+        // Lấy DocumentFile gốc từ URI
         val sdRoot = DocumentFile.fromTreeUri(context, sdRootUri)
 
-        if (sdRoot == null) {
+        if (sdRoot == null || !sdRoot.canWrite()) {
+            Log.e(TAG, "SD Root is null or not writable: $sdRootUri")
             return@withContext MoveSummary(0, files.size, 0L)
         }
 
         files.forEachIndexed { index, file ->
             onProgress(index + 1, total, file.displayName)
 
+            var targetFile: DocumentFile? = null
             try {
-                // Build relative path to preserve directory structure
-                val targetFolder = getOrCreateTargetDirectory(sdRoot, file)
+                // [SỬA LỖI TẠI ĐÂY] Truyền 'file.relativePath' (String) thay vì 'file' (Object)
+                val targetFolder = getOrCreateTargetDirectory(sdRoot, file.relativePath)
+
                 if (targetFolder == null || !targetFolder.isDirectory) {
+                    Log.e(TAG, "Failed to create directory structure for ${file.relativePath}")
                     failedCount++
                     return@forEachIndexed
                 }
 
-                // Conflict handling: if file exists, create a new name with suffix
-                val targetFile = createTargetFile(targetFolder, file)
+                // [SỬA LỖI TẠI ĐÂY] Truyền displayName và mimeType thay vì 'file'
+                targetFile = createTargetFile(targetFolder, file.displayName, file.mimeType)
 
-                // Copy data
+                if (targetFile == null) {
+                    Log.e(TAG, "Failed to create file document: ${file.displayName}")
+                    failedCount++
+                    return@forEachIndexed
+                }
+
+                // Copy dữ liệu
                 val input = resolver.openInputStream(file.uri)
                 val output = resolver.openOutputStream(targetFile.uri)
 
                 if (input == null || output == null) {
-                    failedCount++
+                    Log.e(TAG, "Failed to open streams for ${file.displayName}")
+                    input?.close()
+                    output?.close()
                     targetFile.delete()
+                    failedCount++
                     return@forEachIndexed
                 }
 
+                var successCopy = false
                 input.use { inp ->
                     output.use { out ->
-                        val copiedBytes = copyStream(inp, out)
-                        if (copiedBytes <= 0L) {
-                            // Copy failed
-                            failedCount++
-                            targetFile.delete()
-                            return@forEachIndexed
+                        val bytes = copyStream(inp, out)
+                        if (bytes > 0 || file.sizeBytes == 0L) {
+                            successCopy = true
                         }
                     }
                 }
 
-                // Now try to delete original file to behave like a real move
-                val deleted = deleteOriginalFile(file)
-                if (deleted) {
+                if (!successCopy) {
+                    Log.e(TAG, "Copy failed for ${file.displayName}")
+                    targetFile.delete()
+                    failedCount++
+                    return@forEachIndexed
+                }
+
+                // Xóa file gốc
+                if (deleteOriginalFile(file.uri)) {
                     movedCount++
                     totalMovedBytes += file.sizeBytes
                 } else {
-                    // Delete the copy as well to avoid duplicates
                     failedCount++
-                    targetFile.delete()
                 }
+
             } catch (e: Exception) {
-                Log.e(TAG, "Error moving file ${file.displayName}", e)
+                Log.e(TAG, "Exception moving file ${file.displayName}", e)
+                try { targetFile?.delete() } catch (ex: Exception) { }
                 failedCount++
             }
         }
@@ -326,29 +329,68 @@ class MediaRepository(private val context: Context) {
      * Wrapper used by moveMediaToSdCard to get or create the target directory on SD card
      * that matches the original media relative path.
      */
-    private fun getOrCreateTargetDirectory(
-        rootDoc: DocumentFile,
-        file: MediaFile
-    ): DocumentFile? {
-        return ensureTargetDirectory(rootDoc, file)
+    private fun getOrCreateTargetDirectory(root: DocumentFile, relativePath: String?): DocumentFile? {
+        // Nếu không có đường dẫn con, trả về thư mục gốc
+        if (relativePath.isNullOrEmpty()) return root
+
+        // Chuẩn hóa path: bỏ dấu / ở đầu và cuối
+        val cleanPath = relativePath.trim('/')
+        if (cleanPath.isEmpty()) return root
+
+        val parts = cleanPath.split("/")
+        var currentDir = root
+
+        for (part in parts) {
+            // Tìm xem thư mục/file có tên này đã tồn tại chưa
+            val existing = currentDir.findFile(part)
+
+            if (existing != null) {
+                if (existing.isDirectory) {
+                    // Nếu đã có thư mục -> Đi tiếp vào trong
+                    currentDir = existing
+                } else {
+                    // LỖI: Đã có FILE trùng tên với THƯ MỤC định tạo
+                    Log.e(TAG, "Conflict: '$part' exists but is a FILE. Cannot create directory.")
+                    return null
+                }
+            } else {
+                // Nếu chưa có -> Tạo thư mục mới
+                val created = currentDir.createDirectory(part)
+                if (created == null) {
+                    // LỖI: Hệ thống từ chối tạo thư mục (Thường do sai quyền Write)
+                    Log.e(TAG, "Failed to create directory '$part' inside '${currentDir.name}'. Check SD Card permissions.")
+                    return null
+                }
+                currentDir = created
+            }
+        }
+        return currentDir
     }
 
     /**
      * Creates the target DocumentFile on SD card, handling name conflicts by
      * generating a new name with a timestamp suffix.
      */
-    private fun createTargetFile(
-        parent: DocumentFile,
-        file: MediaFile
-    ): DocumentFile {
-        val mimeType = guessMimeType(file)
-        val desiredName = file.displayName
+    private fun createTargetFile(dir: DocumentFile, displayName: String, mimeType: String?): DocumentFile? {
+        val mime = mimeType ?: "application/octet-stream"
 
-        // If a file with the same name already exists, generate a safe name
-        val finalName = generateSafeFileName(parent, desiredName)
+        if (dir.findFile(displayName) == null) {
+            return dir.createFile(mime, displayName)
+        }
 
-        return parent.createFile(mimeType, finalName)
-            ?: throw IOException("Failed to create target file: $finalName")
+        val nameWithoutExt = displayName.substringBeforeLast('.')
+        val ext = displayName.substringAfterLast('.', "")
+        val extWithDot = if (ext.isNotEmpty()) ".$ext" else ""
+
+        var counter = 1
+        var newName = "$nameWithoutExt ($counter)$extWithDot"
+
+        while (dir.findFile(newName) != null) {
+            counter++
+            newName = "$nameWithoutExt ($counter)$extWithDot"
+        }
+
+        return dir.createFile(mime, newName)
     }
 
     private fun ensureTargetDirectory(

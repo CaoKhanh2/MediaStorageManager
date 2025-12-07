@@ -16,8 +16,8 @@
 
     <string name="no_sdcard_available">Không phát hiện thẻ SD nào.</string>
 
-    <string name="sdcard_not_selected">Thư mục gốc thẻ SD: chưa chọn</string>
-    <string name="sdcard_selected">Thư mục gốc thẻ SD: đã chọn</string>
+    <string name="sdcard_not_selected">Chưa chọn thẻ SD</string>
+    <string name="sdcard_selected">Đã chọn thẻ SD</string>
     <string name="choose_sdcard">Chọn thẻ SD</string>
 
     <string name="media_scan_title">Quét và chuyển media</string>
@@ -32,7 +32,7 @@
     <string name="scan_summary_default">Đã tìm thấy 0 tệp. Đã chọn 0.</string>
     <string name="no_media_found">Không tìm thấy media. Hãy quét lại.</string>
 
-    <string name="moving_progress_format">Đang chuyển %1$d / %2$d: %3$s</string>
+    <string name="moving_progress_format">Đang chuyển: %1$d/%2$d\n%3$s</string>
 
     <string name="media_thumbnail">Ảnh xem trước media</string>
 
