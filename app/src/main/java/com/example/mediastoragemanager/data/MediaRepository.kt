@@ -23,6 +23,8 @@ class MediaRepository(private val context: Context) {
 
     companion object {
         private const val TAG = "MediaRepository"
+        // Increased buffer size to 256KB to optimize copy speed for large video files
+        private const val BUFFER_SIZE = 256 * 1024
     }
 
     /**
@@ -145,11 +147,11 @@ class MediaRepository(private val context: Context) {
 
     /**
      * Helper: Copies data from input stream to output stream.
-     * Uses a large 64KB buffer to optimize performance for large video files.
+     * Uses a large buffer to optimize performance for large video files.
      */
     private fun copyStream(input: InputStream, output: OutputStream): Long {
         var total = 0L
-        val buffer = ByteArray(64 * 1024) // 64KB buffer
+        val buffer = ByteArray(BUFFER_SIZE)
         var read: Int
         while (input.read(buffer).also { read = it } != -1) {
             output.write(buffer, 0, read)
@@ -185,6 +187,7 @@ class MediaRepository(private val context: Context) {
         }
 
         files.forEachIndexed { index, file ->
+            // Notify progress callback
             onProgress(index + 1, total, file.displayName)
 
             var targetFile: DocumentFile? = null
