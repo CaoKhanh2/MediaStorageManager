@@ -1,10 +1,14 @@
 package com.example.mediastoragemanager.ui.main
 
+import android.app.AlertDialog
+import android.app.TimePickerDialog
 import android.os.Bundle
 import android.provider.DocumentsContract
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.CheckBox
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -16,7 +20,10 @@ import com.example.mediastoragemanager.util.FormatUtils
 import com.example.mediastoragemanager.util.PermissionUtils
 import com.getkeepsafe.taptargetview.TapTarget
 import com.getkeepsafe.taptargetview.TapTargetSequence
+import com.google.android.material.chip.Chip
+import com.google.android.material.chip.ChipGroup
 import com.google.android.material.snackbar.Snackbar
+import com.google.android.material.switchmaterial.SwitchMaterial
 
 class MainFragment : Fragment() {
 
@@ -93,7 +100,104 @@ class MainFragment : Fragment() {
             binding.radioBoth.isChecked = true
         }
 
+        // Listener for Schedule Button
+        binding.btnSchedule.setOnClickListener {
+            showScheduleDialog()
+        }
+
         observeViewModel()
+    }
+
+    private fun showScheduleDialog() {
+        val dialogView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_schedule, null)
+        val builder = AlertDialog.Builder(requireContext())
+            .setView(dialogView)
+            .setCancelable(true)
+
+        val dialog = builder.create()
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+        // Find views in the dialog layout
+        val switchEnable = dialogView.findViewById<SwitchMaterial>(R.id.switchEnable)
+        val layoutSettings = dialogView.findViewById<View>(R.id.layoutSettings)
+        val textTime = dialogView.findViewById<TextView>(R.id.textTimeDisplay)
+        val chipGroupDays = dialogView.findViewById<ChipGroup>(R.id.chipGroupDays)
+        val checkImages = dialogView.findViewById<CheckBox>(R.id.checkImages)
+        val checkVideos = dialogView.findViewById<CheckBox>(R.id.checkVideos)
+        val btnSave = dialogView.findViewById<View>(R.id.btnSave)
+        val btnCancel = dialogView.findViewById<View>(R.id.btnCancel)
+
+        // Load saved configuration
+        val config = viewModel.getScheduleConfig()
+        var currentHour = config.hour
+        var currentMinute = config.minute
+
+        // Initialize UI state based on config
+        switchEnable.isChecked = config.isEnabled
+        layoutSettings.visibility = if (config.isEnabled) View.VISIBLE else View.GONE
+        checkImages.isChecked = config.isImages
+        checkVideos.isChecked = config.isVideos
+        textTime.text = String.format("%02d:%02d", currentHour, currentMinute)
+
+        // Initialize Chips (Select days that are in the config)
+        for (i in 0 until chipGroupDays.childCount) {
+            val chip = chipGroupDays.getChildAt(i) as Chip
+            val dayTag = chip.tag.toString()
+            chip.isChecked = config.selectedDays.contains(dayTag)
+        }
+
+        // --- Event Listeners ---
+
+        switchEnable.setOnCheckedChangeListener { _, isChecked ->
+            layoutSettings.visibility = if (isChecked) View.VISIBLE else View.GONE
+        }
+
+        textTime.setOnClickListener {
+            val timePicker = TimePickerDialog(requireContext(), { _, hour, minute ->
+                currentHour = hour
+                currentMinute = minute
+                textTime.text = String.format("%02d:%02d", hour, minute)
+            }, currentHour, currentMinute, true)
+            timePicker.show()
+        }
+
+        btnCancel.setOnClickListener { dialog.dismiss() }
+
+        btnSave.setOnClickListener {
+            // Collect selected days from ChipGroup
+            val selectedDays = mutableSetOf<String>()
+            val checkedChipIds = chipGroupDays.checkedChipIds
+            for (id in checkedChipIds) {
+                val chip = chipGroupDays.findViewById<Chip>(id)
+                selectedDays.add(chip.tag.toString())
+            }
+
+            // Validation check
+            if (switchEnable.isChecked) {
+                if (selectedDays.isEmpty()) {
+                    Toast.makeText(requireContext(), "Vui lòng chọn ít nhất một ngày!", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                if (!checkImages.isChecked && !checkVideos.isChecked) {
+                    Toast.makeText(requireContext(), "Vui lòng chọn loại dữ liệu!", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+            }
+
+            // Save to ViewModel
+            viewModel.scheduleAutoTransfer(
+                currentHour,
+                currentMinute,
+                checkImages.isChecked,
+                checkVideos.isChecked,
+                switchEnable.isChecked,
+                selectedDays
+            )
+            Toast.makeText(requireContext(), "Đã lưu cài đặt!", Toast.LENGTH_SHORT).show()
+            dialog.dismiss()
+        }
+
+        dialog.show()
     }
 
     /**

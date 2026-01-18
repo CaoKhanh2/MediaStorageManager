@@ -12,6 +12,7 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import androidx.work.ExistingPeriodicWorkPolicy
 import com.example.mediastoragemanager.R
 import com.example.mediastoragemanager.data.MediaRepository
 import com.example.mediastoragemanager.data.StorageRepository
@@ -22,6 +23,11 @@ import com.example.mediastoragemanager.util.PreferencesManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import com.example.mediastoragemanager.worker.AutoTransferWorker
+import java.util.Calendar
+import java.util.concurrent.TimeUnit
 
 enum class MediaSelectionMode {
     IMAGES,
@@ -264,6 +270,66 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    /**
+     * Schedules or Cancels the daily auto-transfer task using WorkManager.
+     */
+    /**
+     * Schedules the auto-transfer worker.
+     * @param days Set of strings representing selected days of the week.
+     */
+    fun scheduleAutoTransfer(
+        hour: Int,
+        minute: Int,
+        isImages: Boolean,
+        isVideos: Boolean,
+        isEnabled: Boolean,
+        days: Set<String> // [NEW] Parameter
+    ) {
+        // 1. Save configuration including days
+        prefs.saveSchedule(hour, minute, isImages, isVideos, isEnabled, days)
+
+        val workManager = WorkManager.getInstance(getApplication())
+        val uniqueWorkName = "AutoMediaTransferWork"
+
+        // If disabled, cancel any existing work and exit
+        if (!isEnabled) {
+            workManager.cancelUniqueWork(uniqueWorkName)
+            return
+        }
+
+        // 2. Calculate delay to the next target run time
+        val now = Calendar.getInstance()
+        val target = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, hour)
+            set(Calendar.MINUTE, minute)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+
+        // If time has passed today, schedule for tomorrow
+        if (target.before(now)) {
+            target.add(Calendar.DAY_OF_YEAR, 1)
+        }
+
+        val initialDelay = target.timeInMillis - now.timeInMillis
+
+        // 3. Create Periodic Work Request (Runs every 24 hours)
+        // Note: The Worker itself will check if the current day matches the user selection.
+        val workRequest = PeriodicWorkRequestBuilder<AutoTransferWorker>(24, TimeUnit.HOURS)
+            .setInitialDelay(initialDelay, TimeUnit.MILLISECONDS)
+            .addTag("auto_transfer")
+            .build()
+
+        // 4. Enqueue Work
+        workManager.enqueueUniquePeriodicWork(
+            uniqueWorkName,
+            ExistingPeriodicWorkPolicy.UPDATE,
+            workRequest
+        )
+    }
+
+    fun getScheduleConfig() = prefs.getSchedule()
 
     fun consumeError() {
         _uiState.value = _uiState.value?.copy(errorMessage = null)

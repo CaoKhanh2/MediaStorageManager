@@ -4,11 +4,13 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.getSystemService
@@ -45,11 +47,17 @@ class MoveForegroundService : Service() {
         private const val CHANNEL_ID = "move_media_channel"
         private const val NOTIFICATION_ID = 1001
         private const val TAG = "MoveForegroundService"
+
+        // Update notification at most once per second to prevent System UI lag on old devices
+        private const val NOTIFICATION_UPDATE_INTERVAL_MS = 1000L
     }
 
     // Service lifecycle scope
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var mediaRepository: MediaRepository
+
+    // WakeLock to prevent Samsung devices from sleeping during long operations
+    private var wakeLock: PowerManager.WakeLock? = null
 
     private val localBroadcast by lazy {
         LocalBroadcastManager.getInstance(this)
@@ -69,21 +77,25 @@ class MoveForegroundService : Service() {
         // [CRITICAL] Fix for Android 14+ Crash:
         // startForeground MUST be called immediately within 5 seconds of service start.
         val initialNotification = buildProgressNotification(0, 0, null)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Android 14 requires specifying the service type (dataSync) in code and manifest
-            try {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Android 14 requires specifying the service type (dataSync) in code and manifest
                 startForeground(
                     NOTIFICATION_ID,
                     initialNotification,
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
                 )
-            } catch (e: Exception) {
-                // Fallback for older Android versions or if type is missing
+            } else {
                 startForeground(NOTIFICATION_ID, initialNotification)
             }
-        } else {
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start foreground service", e)
+            // Fallback
             startForeground(NOTIFICATION_ID, initialNotification)
         }
+
+        // Acquire WakeLock to keep CPU running
+        acquireWakeLock()
 
         // Now safe to perform heavy loading operations
         val files: List<MediaFile> = MediaTransferHelper.loadSelection(applicationContext) ?: emptyList()
@@ -92,72 +104,101 @@ class MoveForegroundService : Service() {
         // Validation: If data is missing, stop service gracefully
         if (files.isEmpty() || sdUri == null) {
             Log.e(TAG, "No files found in cache or SD card uri missing")
-
-            // Notify UI to hide loading state
-            localBroadcast.sendBroadcast(
-                Intent(ACTION_MOVE_FINISHED).apply {
-                    putExtra(EXTRA_FINISHED_MOVED, 0)
-                    putExtra(EXTRA_FINISHED_FAILED, 0)
-                    putExtra(EXTRA_FINISHED_BYTES, 0L)
-                }
-            )
-
-            // Clean up and stop
-            MediaTransferHelper.clearSelection(applicationContext)
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf(startId)
+            finalizeService(startId, MoveSummary(0, 0, 0))
             return START_NOT_STICKY
         }
 
-        // Update notification with actual file count
         val nm = getSystemService<NotificationManager>()
         nm?.notify(NOTIFICATION_ID, buildProgressNotification(0, files.size, null))
 
         serviceScope.launch {
             var summary = MoveSummary(0, files.size, 0L)
+            var lastUpdateTime = 0L
+
             try {
                 // Start the heavy move operation
                 summary = mediaRepository.moveMediaToSdCard(files, sdUri) { processed, total, name ->
-                    // 1. Update System Notification
-                    nm?.notify(NOTIFICATION_ID, buildProgressNotification(processed, total, name))
+                    val currentTime = System.currentTimeMillis()
 
-                    // 2. Send Broadcast to update UI
-                    val progressIntent = Intent(ACTION_MOVE_PROGRESS).apply {
-                        putExtra(EXTRA_PROGRESS_PROCESSED, processed)
-                        putExtra(EXTRA_PROGRESS_TOTAL, total)
-                        putExtra(EXTRA_PROGRESS_NAME, name)
+                    // Optimization: Only update notification if 1 second has passed or operation is complete
+                    // This prevents the "System UI isn't responding" error on Samsung S9+
+                    if (currentTime - lastUpdateTime > NOTIFICATION_UPDATE_INTERVAL_MS || processed == total) {
+                        lastUpdateTime = currentTime
+
+                        // 1. Update System Notification
+                        nm?.notify(NOTIFICATION_ID, buildProgressNotification(processed, total, name))
+
+                        // 2. Send Broadcast to update UI
+                        val progressIntent = Intent(ACTION_MOVE_PROGRESS).apply {
+                            putExtra(EXTRA_PROGRESS_PROCESSED, processed)
+                            putExtra(EXTRA_PROGRESS_TOTAL, total)
+                            putExtra(EXTRA_PROGRESS_NAME, name)
+                        }
+                        localBroadcast.sendBroadcast(progressIntent)
                     }
-                    localBroadcast.sendBroadcast(progressIntent)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error while moving files", e)
             } finally {
-                // Operation finished: Send final broadcast
-                val finishedIntent = Intent(ACTION_MOVE_FINISHED).apply {
-                    putExtra(EXTRA_FINISHED_MOVED, summary.movedCount)
-                    putExtra(EXTRA_FINISHED_FAILED, summary.failedCount)
-                    putExtra(EXTRA_FINISHED_BYTES, summary.totalMovedBytes)
-                }
-                localBroadcast.sendBroadcast(finishedIntent)
-
-                // Show completion notification
-                nm?.notify(NOTIFICATION_ID, buildFinishedNotification(summary))
-
-                // Clean up cache file
-                MediaTransferHelper.clearSelection(applicationContext)
-
-                // Stop service (but keep the finished notification visible)
-                stopForeground(STOP_FOREGROUND_DETACH)
-                stopSelf(startId)
+                finalizeService(startId, summary)
             }
         }
 
         return START_REDELIVER_INTENT
     }
 
+    private fun finalizeService(startId: Int, summary: MoveSummary) {
+        // Operation finished: Send final broadcast
+        val finishedIntent = Intent(ACTION_MOVE_FINISHED).apply {
+            putExtra(EXTRA_FINISHED_MOVED, summary.movedCount)
+            putExtra(EXTRA_FINISHED_FAILED, summary.failedCount)
+            putExtra(EXTRA_FINISHED_BYTES, summary.totalMovedBytes)
+        }
+        localBroadcast.sendBroadcast(finishedIntent)
+
+        // Show completion notification
+        val nm = getSystemService<NotificationManager>()
+        nm?.notify(NOTIFICATION_ID, buildFinishedNotification(summary))
+
+        // Clean up cache file
+        MediaTransferHelper.clearSelection(applicationContext)
+
+        // Release WakeLock
+        releaseWakeLock()
+
+        // Stop service (but keep the finished notification visible)
+        stopForeground(STOP_FOREGROUND_DETACH)
+        stopSelf(startId)
+    }
+
+    private fun acquireWakeLock() {
+        try {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = powerManager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "MediaStorageManager::MoveServiceWakelock"
+            )
+            // Set a timeout of 6 hours for 30GB transfer safety
+            wakeLock?.acquire(6 * 60 * 60 * 1000L)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to acquire WakeLock", e)
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to release WakeLock", e)
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         serviceScope.cancel()
+        releaseWakeLock()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -182,8 +223,11 @@ class MoveForegroundService : Service() {
     private fun buildProgressNotification(processed: Int, total: Int, currentName: String?): Notification {
         // Vietnamese Notification Title
         val title = getString(R.string.notif_move_in_progress_title)
+
+        // Truncate name if too long to avoid layout issues
+        val safeName = if ((currentName?.length ?: 0) > 30) "..." + currentName?.takeLast(30) else currentName ?: ""
+
         val content = if (total > 0) {
-            val safeName = currentName ?: ""
             getString(R.string.notif_move_in_progress_text, processed, total, safeName)
         } else {
             getString(R.string.notif_move_preparing)
